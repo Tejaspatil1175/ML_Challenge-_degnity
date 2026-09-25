@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from backend.src.exceptions import ConfigurationError
+
 try:
     import yaml
 except ImportError:
@@ -36,7 +38,7 @@ CONFIG_FILE_PATH = BACKEND_ROOT / "config" / "settings.yaml"
 def _load_yaml(path: Path) -> Dict[str, Any]:
     """Loads a YAML configuration file safely."""
     if not path.exists():
-        raise FileNotFoundError(f"Configuration file not found at: {path}")
+        raise ConfigurationError(f"Configuration file not found at: {path}")
     
     with open(path, "r", encoding="utf-8") as f:
         if yaml is not None:
