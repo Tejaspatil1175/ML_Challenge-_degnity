@@ -12,6 +12,7 @@ from typing import List, Optional
 from backend.src.config import cfg
 from backend.src.data.explore import generate_exploration_report
 from backend.src.logger import get_logger
+from backend.src.normalize.batch_normalize import run_normalization_pipeline
 
 logger = get_logger("pipeline")
 
@@ -27,8 +28,8 @@ def cmd_explore(args: argparse.Namespace) -> int:
 def cmd_normalize(args: argparse.Namespace) -> int:
     """Runs text and address normalization on source datasets."""
     logger.info("Executing subcommand: normalize")
-    logger.info(f"Sample size: {args.sample}")
-    logger.warning("Normalization logic will be attached in Phase C.")
+    saved = run_normalization_pipeline(sample_n=args.sample)
+    logger.info(f"Normalization completed. Parquet files cached at: {list(saved.values())[0].parent}")
     return 0
 
 
