@@ -10,6 +10,7 @@ import sys
 from typing import List, Optional
 
 from backend.src.config import cfg
+from backend.src.data.explore import generate_exploration_report
 from backend.src.logger import get_logger
 
 logger = get_logger("pipeline")
@@ -18,8 +19,8 @@ logger = get_logger("pipeline")
 def cmd_explore(args: argparse.Namespace) -> int:
     """Explores raw dataset distributions, nulls, and statistics."""
     logger.info("Executing subcommand: explore")
-    logger.info(f"Sample size: {args.sample}")
-    logger.warning("Explore stage logic will be attached in Phase B.")
+    report_path = generate_exploration_report(sample_n=args.sample)
+    logger.info(f"Exploration completed. Report saved at: {report_path}")
     return 0
 
 
