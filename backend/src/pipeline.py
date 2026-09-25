@@ -12,6 +12,7 @@ from typing import List, Optional
 from backend.src.blocking.runner import run_blocking_stage
 from backend.src.config import cfg
 from backend.src.data.explore import generate_exploration_report
+from backend.src.features.runner import run_features_stage
 from backend.src.logger import get_logger
 from backend.src.normalize.batch_normalize import run_normalization_pipeline
 
@@ -46,7 +47,9 @@ def cmd_block(args: argparse.Namespace) -> int:
 def cmd_features(args: argparse.Namespace) -> int:
     """Extracts pairwise string, token, semantic, and spatial similarity features."""
     logger.info("Executing subcommand: features")
-    logger.warning("Features extraction logic will be attached in Phase E.")
+    split = getattr(args, "split", "train")
+    feat_df = run_features_stage(split=split, sample_n=args.sample)
+    logger.info(f"Features extraction completed: {feat_df.height:,} rows generated.")
     return 0
 
 
@@ -120,6 +123,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # features
     p_feat = subparsers.add_parser("features", help="Extract pairwise similarity features")
+    p_feat.add_argument("--split", type=str, default="train", choices=["train", "test"], help="Dataset split for features")
     p_feat.add_argument("--sample", type=int, default=None, help="Sample limit for feature extraction")
     p_feat.set_defaults(func=cmd_features)
 
