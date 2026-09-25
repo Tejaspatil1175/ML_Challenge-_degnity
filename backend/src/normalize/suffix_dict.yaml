@@ -1,0 +1,41 @@
+# Legal and Business Entity Suffix & Abbreviation Normalization Dictionary
+
+replacements:
+  # Symbols & Ampersands
+  "\\&": " and "
+  "\\+": " and "
+  "@": " at "
+
+  # Common corporate designations & legal suffixes
+  "\\bco\\.?\\b": "company"
+  "\\bcorp\\.?\\b": "corporation"
+  "\\bcorporation\\b": "corporation"
+  "\\binc\\.?\\b": "incorporated"
+  "\\bincorporated\\b": "incorporated"
+  "\\bltd\\.?\\b": "limited"
+  "\\blimited\\b": "limited"
+  "\\bpvt\\.?\\b": "private"
+  "\\bprivate\\b": "private"
+  "\\bllc\\.?\\b": "llc"
+  "\\bllp\\.?\\b": "llp"
+  "\\bplc\\.?\\b": "plc"
+  "\\bgmbh\\b": "gmbh"
+  "\\bsa\\b": "sa"
+  "\\bsarl\\b": "sarl"
+  "\\bco\\s+kg\\b": "co kg"
+  "\\bm/s\\.?\\b": ""
+  "\\bms\\.?\\b": ""
+
+  # Business prefixes / types
+  "\\bent\\.?\\b": "enterprise"
+  "\\benterprises\\b": "enterprises"
+  "\\bind\\.?\\b": "industries"
+  "\\bindustries\\b": "industries"
+  "\\bserv\\.?\\b": "services"
+  "\\bservices\\b": "services"
+  "\\bintl\\.?\\b": "international"
+  "\\binternational\\b": "international"
+  "\\bmfg\\.?\\b": "manufacturing"
+  "\\bassoc\\.?\\b": "associates"
+  "\\bgrp\\.?\\b": "group"
+  "\\bctr\\.?\\b": "center"
