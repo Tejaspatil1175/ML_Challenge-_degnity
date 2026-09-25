@@ -9,6 +9,7 @@ import argparse
 import sys
 from typing import List, Optional
 
+from backend.src.blocking.runner import run_blocking_stage
 from backend.src.config import cfg
 from backend.src.data.explore import generate_exploration_report
 from backend.src.logger import get_logger
@@ -36,8 +37,9 @@ def cmd_normalize(args: argparse.Namespace) -> int:
 def cmd_block(args: argparse.Namespace) -> int:
     """Executes rule-based and semantic dense vector candidate blocking."""
     logger.info("Executing subcommand: block")
-    logger.info(f"Top-K: {args.top_k}, Sample size: {args.sample}")
-    logger.warning("Blocking logic will be attached in Phase D.")
+    split = getattr(args, "split", "train")
+    cands, stats = run_blocking_stage(split=split, sample_n=args.sample)
+    logger.info(f"Candidate blocking completed: {cands.height:,} candidate pairs generated.")
     return 0
 
 
@@ -111,6 +113,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # block
     p_block = subparsers.add_parser("block", help="Run multi-stage candidate blocking")
+    p_block.add_argument("--split", type=str, default="train", choices=["train", "test"], help="Dataset split to block")
     p_block.add_argument("--sample", type=int, default=None, help="Sample limit for fast local iteration")
     p_block.add_argument("--top-k", type=int, default=cfg.blocking.get("top_k_embed", 10), help="Top-K nearest neighbors")
     p_block.set_defaults(func=cmd_block)
