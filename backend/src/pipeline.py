@@ -54,9 +54,29 @@ def cmd_features(args: argparse.Namespace) -> int:
 
 
 def cmd_train(args: argparse.Namespace) -> int:
-    """Trains LightGBM classifier using GroupKFold leakage-safe splitting."""
+    """Trains LightGBM classifier using entity-grouped leakage-safe splitting."""
     logger.info("Executing subcommand: train")
-    logger.warning("Training logic will be attached in Phase F.")
+    from pathlib import Path
+    import polars as pl
+    from backend.src.model.train import train_matching_model
+
+    proc_dir = Path(cfg.paths.processed_dir)
+    feat_file = proc_dir / "train_features.parquet"
+    if not feat_file.exists():
+        logger.info(f"Feature table not found at {feat_file}. Running feature extraction first...")
+        from backend.src.features.runner import run_features_stage
+        run_features_stage(split="train")
+
+    logger.info(f"Loading training features from: {feat_file}")
+    features_df = pl.read_parquet(feat_file)
+
+    val_ratio = cfg.training.get("val_ratio", 0.20)
+    model, feature_names, val_split, val_probs = train_matching_model(
+        train_features_df=features_df,
+        val_ratio=val_ratio,
+        model_version="v1",
+    )
+    logger.info("Model training stage completed successfully.")
     return 0
 
 
