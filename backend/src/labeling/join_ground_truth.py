@@ -32,38 +32,31 @@ def create_training_labels(
     Returns:
         polars.DataFrame containing all feature columns plus target column 'is_match' (Int32).
     """
-    logger.info("Constructing binary matching labels from ground truth...")
+    logger.info("Constructing binary matching labels from ground truth via vectorized join...")
     t0 = time.time()
 
-    # Build fast lookup of true match pairs: Set[(s1_id, match_id)]
-    true_pairs: Set[Tuple[str, str]] = set()
-    for row in ground_truth_df.iter_rows(named=True):
-        s1_id = row["source1_entity_id"]
-        m_str = row["matched_entity_ids"]
-        if m_str:
-            for cand_id in m_str.split(","):
-                cand_id = cand_id.strip()
-                if cand_id:
-                    true_pairs.add((s1_id, cand_id))
-
-    logger.info(f"Loaded {len(true_pairs):,} true match pairs from ground truth.")
-
-    # Vectorized label assignment
-    s1_ids = candidate_features_df["source1_entity_id"].to_list()
-    cand_ids = candidate_features_df["candidate_entity_id"].to_list()
-
-    labels = [
-        1 if (s1, cand) in true_pairs else 0
-        for s1, cand in zip(s1_ids, cand_ids)
-    ]
-
-    labeled_df = candidate_features_df.with_columns(
-        pl.Series("is_match", labels, dtype=pl.Int32)
+    # Explode ground truth matched IDs into pairwise format with target flag
+    gt_exploded = (
+        ground_truth_df
+        .filter(pl.col("matched_entity_ids").is_not_null() & (pl.col("matched_entity_ids") != ""))
+        .with_columns(pl.col("matched_entity_ids").str.split(","))
+        .explode("matched_entity_ids")
+        .with_columns(pl.col("matched_entity_ids").str.strip_chars())
+        .rename({"matched_entity_ids": "candidate_entity_id"})
+        .with_columns(pl.lit(1, dtype=pl.Int32).alias("is_match"))
+        .select(["source1_entity_id", "candidate_entity_id", "is_match"])
     )
 
-    n_pos = sum(labels)
-    n_neg = len(labels) - n_pos
-    pos_pct = (n_pos / max(len(labels), 1)) * 100
+    # Vectorized left join in Polars: unmatched candidates automatically become 0
+    labeled_df = (
+        candidate_features_df
+        .join(gt_exploded, on=["source1_entity_id", "candidate_entity_id"], how="left")
+        .with_columns(pl.col("is_match").fill_null(0))
+    )
+
+    n_pos = labeled_df.filter(pl.col("is_match") == 1).height
+    n_neg = labeled_df.height - n_pos
+    pos_pct = (n_pos / max(labeled_df.height, 1)) * 100
 
     elapsed = time.time() - t0
     logger.info(

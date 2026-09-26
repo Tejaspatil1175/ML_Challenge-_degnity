@@ -83,7 +83,7 @@ def evaluate_blocking_recall(
     candidate_df: pl.DataFrame,
     ground_truth_df: pl.DataFrame,
 ) -> Dict[str, float]:
-    """Measures blocking candidate recall against true matches in ground truth.
+    """Measures blocking candidate recall against true matches in ground truth with high-speed Polars join.
 
     Args:
         candidate_df: DataFrame with [source1_entity_id, candidate_entity_id].
@@ -94,19 +94,17 @@ def evaluate_blocking_recall(
     """
     logger.info("Computing blocking recall against ground truth...")
 
-    # Build true pairs lookup
-    total_true_pairs = 0
-    gt_pairs: Set[Tuple[str, str]] = set()
-
-    for row in ground_truth_df.iter_rows(named=True):
-        s1_id = row["source1_entity_id"]
-        m_str = row["matched_entity_ids"]
-        if m_str:
-            for cand_id in m_str.split(","):
-                cand_id = cand_id.strip()
-                if cand_id:
-                    gt_pairs.add((s1_id, cand_id))
-                    total_true_pairs += 1
+    # Explode ground truth matched IDs into pairwise format using Polars
+    gt_exploded = (
+        ground_truth_df
+        .filter(pl.col("matched_entity_ids").is_not_null() & (pl.col("matched_entity_ids") != ""))
+        .with_columns(pl.col("matched_entity_ids").str.split(","))
+        .explode("matched_entity_ids")
+        .with_columns(pl.col("matched_entity_ids").str.strip_chars())
+        .rename({"matched_entity_ids": "candidate_entity_id"})
+        .select(["source1_entity_id", "candidate_entity_id"])
+    )
+    total_true_pairs = gt_exploded.height
 
     if total_true_pairs == 0:
         return {
@@ -117,12 +115,13 @@ def evaluate_blocking_recall(
             "avg_candidates_per_entity": 0.0,
         }
 
-    # Extract retrieved candidate pairs
-    cand_pairs: Set[Tuple[str, str]] = set(
-        zip(candidate_df["source1_entity_id"].to_list(), candidate_df["candidate_entity_id"].to_list())
-    )
+    # High-speed inner join in Polars to count retrieved true pairs
+    retrieved_true = candidate_df.select(
+        ["source1_entity_id", "candidate_entity_id"]
+    ).join(
+        gt_exploded, on=["source1_entity_id", "candidate_entity_id"], how="inner"
+    ).height
 
-    retrieved_true = len(gt_pairs.intersection(cand_pairs))
     recall = retrieved_true / total_true_pairs
 
     unique_s1 = candidate_df.select(pl.col("source1_entity_id").n_unique()).item() if candidate_df.height > 0 else 1
