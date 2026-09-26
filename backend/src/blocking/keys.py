@@ -154,11 +154,13 @@ def run_key_based_blocking(
              AND s1.clean_city = s23.clean_city
              AND s1.clean_city != '';
 
-        SELECT source1_entity_id, candidate_entity_id
+        CREATE TEMPORARY TABLE unique_candidates AS
+        SELECT source1_entity_id, candidate_entity_id, MIN(priority_score) AS priority_score
         FROM candidates_union
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY source1_entity_id, candidate_entity_id ORDER BY priority_score
-        ) = 1
+        GROUP BY source1_entity_id, candidate_entity_id;
+
+        SELECT source1_entity_id, candidate_entity_id
+        FROM unique_candidates
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY source1_entity_id ORDER BY priority_score
         ) <= {max_cands_per_entity};
