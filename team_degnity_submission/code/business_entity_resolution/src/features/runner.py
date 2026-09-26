@@ -35,6 +35,11 @@ def run_features_stage(
 
     proc_dir = Path(cfg.paths.processed_dir)
     cand_file = Path(cfg.paths.output_dir) / f"{split}_candidate_pairs.tsv"
+    if not cand_file.exists() and split == "test":
+        alt_cand_file = Path(cfg.paths.candidate_pairs_tsv)
+        if alt_cand_file.exists():
+            cand_file = alt_cand_file
+
     if not cand_file.exists():
         logger.info(f"Candidate pairs file not found at {cand_file}. Automatically running blocking stage for split='{split}'...")
         from backend.src.blocking.runner import run_blocking_stage
@@ -42,16 +47,6 @@ def run_features_stage(
 
     logger.info(f"Reading candidate pairs from: {cand_file}")
     cand_df = pl.read_csv(cand_file, separator="\t", n_rows=sample_n if (sample_n and sample_n > 0) else None)
-
-    # If file is formatted as aggregated candidate_entity_ids (comma-separated), explode to pairwise format
-    if "candidate_entity_ids" in cand_df.columns and "candidate_entity_id" not in cand_df.columns:
-        cand_df = (
-            cand_df
-            .filter(pl.col("candidate_entity_ids").is_not_null() & (pl.col("candidate_entity_ids") != ""))
-            .with_columns(pl.col("candidate_entity_ids").str.split(","))
-            .explode("candidate_entity_ids")
-            .rename({"candidate_entity_ids": "candidate_entity_id"})
-        )
 
     # Load normalized parquet tables
     s1_norm = pl.read_parquet(proc_dir / f"{split}_s1_norm.parquet")

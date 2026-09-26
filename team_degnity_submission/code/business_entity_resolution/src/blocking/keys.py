@@ -119,7 +119,7 @@ def run_key_based_blocking(
 
     try:
         # Create staging table on disk to process passes sequentially with minimal memory footprint
-        con.execute("CREATE TABLE candidates (source1_entity_id VARCHAR, candidate_entity_id VARCHAR);")
+        con.execute("CREATE TABLE candidates (source1_entity_id VARCHAR, candidate_entity_id VARCHAR, priority_score UTINYINT);")
 
         # Pass 1: Exact Clean Business Name Match
         logger.info("Running Blocking Pass 1: Exact Clean Business Name...")
@@ -127,13 +127,13 @@ def run_key_based_blocking(
         INSERT INTO candidates
         SELECT 
             s1.entity_id AS source1_entity_id, 
-            s23.entity_id AS candidate_entity_id
+            s23.entity_id AS candidate_entity_id,
+            1 AS priority_score
         FROM {s1_from} s1 
         JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
           ON s1.clean_name = s23.clean_name 
          AND s1.clean_name != ''
-         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '');
         """)
 
         # Pass 2: Prefix + Exact City Match in Same Country
@@ -142,15 +142,15 @@ def run_key_based_blocking(
         INSERT INTO candidates
         SELECT 
             s1.entity_id AS source1_entity_id, 
-            s23.entity_id AS candidate_entity_id
+            s23.entity_id AS candidate_entity_id,
+            2 AS priority_score
         FROM {s1_from} s1 
         JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
           ON s1.name_prefix_4 = s23.name_prefix_4 
          AND LENGTH(s1.name_prefix_4) >= 3
          AND s1.clean_city = s23.clean_city
          AND s1.clean_city != ''
-         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '');
         """)
 
         # Pass 3: Prefix + Exact Postal / PIN Code Match
@@ -159,14 +159,14 @@ def run_key_based_blocking(
         INSERT INTO candidates
         SELECT 
             s1.entity_id AS source1_entity_id, 
-            s23.entity_id AS candidate_entity_id
+            s23.entity_id AS candidate_entity_id,
+            3 AS priority_score
         FROM {s1_from} s1 
         JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
           ON s1.name_prefix_4 = s23.name_prefix_4 
          AND LENGTH(s1.name_prefix_4) >= 3
          AND s1.clean_zipcode = s23.clean_zipcode 
-         AND s1.clean_zipcode != ''
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+         AND s1.clean_zipcode != '';
         """)
 
         # Export distinct candidate pairs directly to Parquet

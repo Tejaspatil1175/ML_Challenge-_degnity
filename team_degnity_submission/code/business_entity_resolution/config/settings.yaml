@@ -1,0 +1,73 @@
+# Global System Settings for Business Entity Resolution Pipeline
+
+paths:
+  # Base dataset directory (searches local candidate paths automatically if not set)
+  raw_dataset_dir: "6ab10eb3b23ba_student_resource/student_resource/dataset"
+  train_s1_filename: "train/train_source1.tsv"
+  train_s2_filename: "train/train_source2.tsv"
+  train_s3_filename: "train/train_source3.tsv"
+  train_gt_filename: "train/train_ground_truth.tsv"
+  test_s1_filename: "test/test_source1.tsv"
+  test_s2_filename: "test/test_source2.tsv"
+  test_s3_filename: "test/test_source3.tsv"
+  
+  # Artifact and cache directories
+  processed_dir: "data_cache/processed"
+  embeddings_dir: "data_cache/embeddings"
+  faiss_index_dir: "data_cache/faiss"
+  models_dir: "models"
+  output_dir: "output"
+  reports_dir: "backend/reports"
+  
+  # Output filenames
+  candidate_pairs_output: "candidate_pairs.tsv"
+  matching_results_output: "matching_results.tsv"
+
+execution:
+  random_seed: 42
+  num_workers: 4
+  default_sample_n: null
+
+normalization:
+  suffix_dict_path: "src/normalize/suffix_dict.yaml"
+  lowercase: true
+  strip_accents: true
+
+blocking:
+  top_k_embed: 10
+  embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  embed_batch_size: 1024
+  max_candidates_per_entity: 50
+  faiss_index_type: "IndexIVFFlat"
+  nlist: 100
+
+features:
+  tfidf_max_features: 10000
+  tfidf_ngram_range: [2, 4]
+  include_dense_embeddings: true
+
+training:
+  n_splits: 5
+  val_ratio: 0.20
+  lgbm_params:
+    objective: "binary"
+    metric: "binary_logloss"
+    learning_rate: 0.05
+    num_leaves: 63
+    feature_fraction: 0.8
+    min_data_in_leaf: 100
+    n_estimators: 500
+    n_jobs: -1
+    verbose: -1
+
+evaluation:
+  beta: 0.5
+  threshold_min: 0.30
+  threshold_max: 0.90
+  threshold_step: 0.02
+  default_threshold: 0.65
+
+logging:
+  level: "INFO"
+  log_to_file: true
+  log_file: "backend/reports/pipeline.log"

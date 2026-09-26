@@ -121,33 +121,11 @@ def run_prediction_pipeline(
     all_s1_ids = test_s1_df["entity_id"].to_list()
     logger.info(f"Loaded {len(all_s1_ids):,} test reference S1 entities.")
 
-    # 2. Ensure test features exist AND are fresh (must cover every test S1 entity that
-    # has at least one candidate). A stale/partial cached parquet from an earlier debug
-    # run must never be silently reused for real inference.
+    # 2. Ensure test features exist
     proc_dir = Path(cfg.paths.processed_dir)
     test_feat_path = proc_dir / "test_features.parquet"
-
-    def _features_are_stale(path: Path) -> bool:
-        if not path.exists():
-            return True
-        try:
-            existing = pl.read_parquet(path, columns=["source1_entity_id"])
-        except Exception:
-            return True
-        distinct_s1_in_features = existing["source1_entity_id"].n_unique()
-        # Real full-scale features must cover a meaningful fraction of all test S1 entities
-        # (a stale debug sample will cover only a tiny handful of them).
-        min_expected = max(1, int(0.5 * len(all_s1_ids)))
-        if distinct_s1_in_features < min_expected:
-            logger.warning(
-                f"Cached test_features.parquet only covers {distinct_s1_in_features:,} of "
-                f"{len(all_s1_ids):,} S1 entities - treating as stale and regenerating."
-            )
-            return True
-        return False
-
-    if _features_are_stale(test_feat_path):
-        logger.info(f"Test features missing or stale at {test_feat_path}. Running full test feature extraction...")
+    if not test_feat_path.exists():
+        logger.info(f"Test features not found at {test_feat_path}. Running test feature extraction...")
         from backend.src.features.runner import run_features_stage
         run_features_stage(split="test", sample_n=sample_n)
 
@@ -173,7 +151,7 @@ def run_prediction_pipeline(
             try:
                 import re
                 text = rep_file.read_text(encoding="utf-8")
-                match = re.search(r"Optimal Decision Threshold[^`]*`([0-9.]+)`", text)
+                match = re.search(r"Optimal Threshold:\s*\*\*([0-9.]+)\*\*", text)
                 if match:
                     dec_thresh = float(match.group(1))
                     logger.info(f"Loaded calibrated optimal threshold from {rep_file}: {dec_thresh:.3f}")

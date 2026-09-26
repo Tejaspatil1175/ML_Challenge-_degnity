@@ -21,6 +21,8 @@ models/*.txt
 models/*.faiss
 models/*.npy
 output/
+team_degnity_submission/output/
 reports/*.png
 *.log
 *.zip
+
