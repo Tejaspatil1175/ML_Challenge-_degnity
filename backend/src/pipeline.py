@@ -81,9 +81,54 @@ def cmd_train(args: argparse.Namespace) -> int:
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
-    """Performs threshold sweep and Macro F0.5 evaluation."""
+    """Performs threshold sweep and Macro F0.5 evaluation on validation split."""
     logger.info("Executing subcommand: evaluate")
-    logger.warning("Evaluation logic will be attached in Phase F.")
+    from pathlib import Path
+    import polars as pl
+    from backend.src.data.loader import load_ground_truth
+    from backend.src.eval.threshold_search import (
+        save_evaluation_report,
+        search_optimal_threshold,
+    )
+    from backend.src.model.persist import load_model
+    from backend.src.model.split import split_train_val
+    from backend.src.model.train import get_feature_columns, predict_pair_probabilities
+
+    model_path = Path(cfg.paths.models_dir) / "latest_model.joblib"
+    if not model_path.exists():
+        logger.warning(f"Trained model not found at {model_path}. Running training first...")
+        cmd_train(args)
+
+    model, meta = load_model(model_path)
+    feat_file = Path(cfg.paths.processed_dir) / "train_features.parquet"
+    if not feat_file.exists():
+        logger.warning(f"Feature table not found at {feat_file}. Running feature extraction first...")
+        from backend.src.features.runner import run_features_stage
+        run_features_stage(split="train")
+
+    features_df = pl.read_parquet(feat_file)
+    _, val_split = split_train_val(
+        features_df,
+        val_ratio=cfg.training.get("val_ratio", 0.20),
+        random_seed=cfg.execution.get("random_seed", 42),
+    )
+
+    feature_cols = meta.get("metadata", {}).get("feature_names") or get_feature_columns(val_split)
+    val_probs = predict_pair_probabilities(model, val_split, feature_cols)
+    val_scored = val_split.with_columns(pl.Series("pred_prob", val_probs))
+
+    gt_df = load_ground_truth(cfg.paths.train_gt)
+    best_thresh, best_f05, sweep_df = search_optimal_threshold(
+        val_scored_df=val_scored,
+        ground_truth_df=gt_df,
+        threshold_min=cfg.evaluation.get("threshold_min", 0.30),
+        threshold_max=cfg.evaluation.get("threshold_max", 0.90),
+        threshold_step=cfg.evaluation.get("threshold_step", 0.02),
+        beta=cfg.evaluation.get("beta", 0.5),
+    )
+
+    report_path = save_evaluation_report(best_thresh, best_f05, sweep_df)
+    logger.info(f"Evaluation completed. Report saved at: {report_path}")
     return 0
 
 
