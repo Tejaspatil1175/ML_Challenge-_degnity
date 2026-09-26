@@ -81,14 +81,16 @@ def normalize_address(address: Optional[str]) -> str:
 def extract_address_parts(
     address: Optional[str],
     country: Optional[str] = None,
+    clean_address: Optional[str] = None,
 ) -> Dict[str, Optional[str]]:
     """Extracts structured address components (street number, city, state, postal code).
 
-    Designed to be robust and fail-safe: returns None for missing components without raising.
+    Designed to be robust, fail-safe, and high performance: eliminates redundant regex passes.
 
     Args:
-        address: Raw or normalized address string.
+        address: Raw unstructured address string.
         country: Optional country ISO code or name.
+        clean_address: Optional pre-normalized address string to avoid redundant normalization.
 
     Returns:
         Dictionary with keys: 'street_number', 'street_name', 'city', 'state', 'zipcode'.
@@ -104,12 +106,12 @@ def extract_address_parts(
     if not address or not isinstance(address, str):
         return result
 
-    clean_addr = normalize_address(address)
-    if not clean_addr:
+    c_addr = clean_address if clean_address is not None else normalize_address(address)
+    if not c_addr:
         return result
 
     # 1. Extract street number if starting with digits
-    num_match = _STREET_NUM_REGEX.search(clean_addr)
+    num_match = _STREET_NUM_REGEX.search(c_addr)
     if num_match:
         result["street_number"] = num_match.group(1)
 
@@ -133,15 +135,14 @@ def extract_address_parts(
         if pin_match:
             result["zipcode"] = pin_match.group(0)
 
-    # 3. Best-effort city/state decomposition using commas from raw address
-    parts = [p.strip() for p in address.split(",") if p.strip()]
+    # 3. Fast city/state decomposition using commas from raw address without redundant regex calls
+    parts = [p.strip().lower() for p in address.split(",") if p.strip()]
     if len(parts) >= 3:
-        # e.g. "1795 Westchester Drive, High Point, NC"
-        result["street_name"] = normalize_address(parts[0])
-        result["city"] = normalize_address(parts[1])
-        result["state"] = normalize_address(parts[2])
+        result["street_name"] = parts[0]
+        result["city"] = parts[1]
+        result["state"] = parts[2]
     elif len(parts) == 2:
-        result["street_name"] = normalize_address(parts[0])
-        result["city"] = normalize_address(parts[1])
+        result["street_name"] = parts[0]
+        result["city"] = parts[1]
 
     return result

@@ -21,8 +21,8 @@ from backend.src.normalize.name import normalize_name
 logger = get_logger(__name__)
 
 
-def normalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
-    """Applies canonical text normalization and structured extraction to a source DataFrame.
+def normalize_dataframe(df: pl.DataFrame, dataset_name: str = "") -> pl.DataFrame:
+    """Applies canonical text normalization and structured extraction in a fast single pass.
 
     Adds columns:
         - clean_name: Normalized, unaccented, expanded name.
@@ -34,57 +34,62 @@ def normalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
 
     Args:
         df: Raw source Polars DataFrame.
+        dataset_name: Optional name for progress display.
 
     Returns:
         Polars DataFrame with added normalized columns.
     """
-    logger.debug(f"Normalizing DataFrame with {df.height:,} rows...")
+    from tqdm import tqdm
+
+    n_rows = df.height
+    logger.info(f"  -> Starting high-speed normalization on {n_rows:,} rows...")
     t0 = time.time()
 
-    # 1. Normalize name and address via map_elements
-    clean_names = df["business_name"].map_elements(normalize_name, return_dtype=pl.Utf8)
-    clean_addrs = df["business_address"].map_elements(normalize_address, return_dtype=pl.Utf8)
-    clean_countries = (
-        df["country"]
-        .fill_null("")
-        .str.strip_chars()
-        .str.to_uppercase()
-    )
+    raw_names = df["business_name"].to_list()
+    raw_addrs = df["business_address"].to_list()
+    raw_countries = df["country"].to_list()
 
-    # 2. Extract prefix for fast blocking keys using native slice
-    name_prefixes = clean_names.str.slice(0, 4).str.strip_chars()
-
-    # 3. Extract postal codes & cities with progress tracking
-    raw_addrs_list = df["business_address"].to_list()
-    countries_list = df["country"].to_list()
-
+    clean_names: List[str] = []
+    clean_addrs: List[str] = []
+    clean_countries: List[str] = []
+    name_prefixes: List[str] = []
     zipcodes: List[str] = []
     cities: List[str] = []
 
-    from tqdm import tqdm
-    for addr, cntry in tqdm(
-        zip(raw_addrs_list, countries_list),
-        total=len(raw_addrs_list),
-        desc="  -> Parsing address parts",
+    pbar_desc = f"  [{dataset_name}] Normalizing" if dataset_name else "  Normalizing rows"
+    for name, addr, cntry in tqdm(
+        zip(raw_names, raw_addrs, raw_countries),
+        total=n_rows,
+        desc=pbar_desc,
         unit="rows",
         leave=False,
     ):
-        parts = extract_address_parts(addr, country=cntry)
+        c_name = normalize_name(name)
+        c_addr = normalize_address(addr)
+        c_cntry = (str(cntry).strip().upper()) if cntry is not None else ""
+
+        clean_names.append(c_name)
+        clean_addrs.append(c_addr)
+        clean_countries.append(c_cntry)
+        name_prefixes.append(c_name[:4].strip())
+
+        parts = extract_address_parts(addr, country=c_cntry, clean_address=c_addr)
         zipcodes.append(parts.get("zipcode") or "")
         cities.append(parts.get("city") or "")
 
-    # Combine into enriched DataFrame
+    # Construct output Polars DataFrame in one batch
     df_norm = df.with_columns([
-        clean_names.alias("clean_name"),
-        clean_addrs.alias("clean_address"),
-        clean_countries.alias("clean_country"),
-        name_prefixes.alias("name_prefix_4"),
+        pl.Series("clean_name", clean_names, dtype=pl.Utf8),
+        pl.Series("clean_address", clean_addrs, dtype=pl.Utf8),
+        pl.Series("clean_country", clean_countries, dtype=pl.Utf8),
+        pl.Series("name_prefix_4", name_prefixes, dtype=pl.Utf8),
         pl.Series("clean_zipcode", zipcodes, dtype=pl.Utf8),
         pl.Series("clean_city", cities, dtype=pl.Utf8),
     ])
 
     elapsed = time.time() - t0
-    logger.info(f"  [OK] Normalization complete in {elapsed:.2f}s ({df.height / max(elapsed, 0.001):,.0f} rows/s).")
+    rate = n_rows / max(elapsed, 0.001)
+    logger.info(f"  [OK] Finished {dataset_name} ({n_rows:,} rows) in {elapsed:.2f}s ({rate:,.0f} rows/s).")
     return df_norm
 
 
@@ -127,7 +132,7 @@ def run_normalization_pipeline(
             df = load_source(path, sample_n=sample_n)
             validate_source_schema(df, expected_source=prefix)
             
-            df_norm = normalize_dataframe(df)
+            df_norm = normalize_dataframe(df, dataset_name=key)
             df_norm.write_parquet(out_path, compression="zstd")
             
             saved_paths[key] = out_path
