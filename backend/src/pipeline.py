@@ -157,7 +157,11 @@ def cmd_predict(args: argparse.Namespace) -> int:
 def cmd_package(args: argparse.Namespace) -> int:
     """Builds final submission zip archive per official challenge specification."""
     logger.info("Executing subcommand: package")
-    logger.warning("Packaging logic will be attached in Phase G.")
+    from backend.src.package.build_submission import build_submission_package
+
+    team_name = getattr(args, "team_name", "team_degnity")
+    zip_path = build_submission_package(team_name=team_name)
+    logger.info(f"Final submission package created successfully at: {zip_path}")
     return 0
 
 
@@ -222,6 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # package
     p_pkg = subparsers.add_parser("package", help="Assemble submission package zip")
+    p_pkg.add_argument("--team-name", type=str, default="team_degnity", help="Participating team name for zip naming")
     p_pkg.set_defaults(func=cmd_package)
 
     # run-all
