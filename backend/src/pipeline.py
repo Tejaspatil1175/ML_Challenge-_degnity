@@ -135,8 +135,22 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
 def cmd_predict(args: argparse.Namespace) -> int:
     """Generates candidate_pairs.tsv and matching_results.tsv for test data."""
     logger.info("Executing subcommand: predict")
-    logger.info(f"Validate output: {args.validate}")
-    logger.warning("Prediction logic will be attached in Phase G.")
+    from backend.src.predict.matching_writer import run_prediction_pipeline
+    from backend.src.predict.validator import validate_submission_files
+
+    cand_path, match_path = run_prediction_pipeline(sample_n=getattr(args, "sample", None))
+    logger.info(f"Predictions generated:\n  - Matching: {match_path}\n  - Candidates: {cand_path}")
+
+    if getattr(args, "validate", False):
+        is_valid, issues = validate_submission_files(
+            matching_tsv_path=match_path,
+            candidate_tsv_path=cand_path,
+        )
+        if not is_valid:
+            logger.error("Submission validation failed.")
+            return 1
+        logger.info("Submission validation succeeded.")
+
     return 0
 
 
