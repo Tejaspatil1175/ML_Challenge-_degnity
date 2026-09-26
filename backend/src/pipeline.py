@@ -166,15 +166,49 @@ def cmd_package(args: argparse.Namespace) -> int:
 
 
 def cmd_run_all(args: argparse.Namespace) -> int:
-    """Executes the full pipeline sequentially."""
-    logger.info("Starting end-to-end entity resolution pipeline...")
-    stages = [cmd_normalize, cmd_block, cmd_features, cmd_train, cmd_evaluate, cmd_predict, cmd_package]
-    for stage in stages:
-        res = stage(args)
+    """Executes the full pipeline sequentially with live progress and timing diagnostics."""
+    import time
+    from datetime import timedelta
+
+    total_start = time.time()
+    stages = [
+        ("1/7", "Normalization (Text & Address Cleaner)", cmd_normalize),
+        ("2/7", "Candidate Blocking (Inverted Keys & Embeddings)", cmd_block),
+        ("3/7", "Pairwise Feature Extraction & Ground Truth Join", cmd_features),
+        ("4/7", "Model Training (GroupKFold LightGBM Classifier)", cmd_train),
+        ("5/7", "Metric Calibration (Macro F0.5 Threshold Search)", cmd_evaluate),
+        ("6/7", "Test Inference & Format Validation", cmd_predict),
+        ("7/7", "Submission Archiving (Zip & Documentation)", cmd_package),
+    ]
+
+    total_stages = len(stages)
+    print("\n" + "=" * 80)
+    print("  🚀 STARTING END-TO-END ENTITY RESOLUTION PIPELINE (7 STAGES)")
+    print("=" * 80 + "\n")
+
+    for idx, (stage_num, stage_name, stage_func) in enumerate(stages, start=1):
+        pct = int(((idx - 1) / total_stages) * 100)
+        stage_start = time.time()
+        print(f"\n[{'#' * (pct // 5)}{'.' * (20 - pct // 5)}] {pct}% | [STAGE {stage_num}] {stage_name}")
+        print("-" * 80)
+        logger.info(f">> Running Stage {stage_num}: {stage_name}")
+
+        res = stage_func(args)
+        stage_duration = time.time() - stage_start
+        total_elapsed = time.time() - total_start
+
         if res != 0:
-            logger.error(f"Stage {stage.__name__} failed with code {res}")
+            print(f"\n❌ [FAILED] Stage {stage_num} ({stage_name}) failed with exit code {res}")
+            logger.error(f"Stage {stage_name} failed with code {res}")
             return res
-    logger.info("End-to-end pipeline completed successfully.")
+
+        print(f"✅ [COMPLETED] Stage {stage_num} in {stage_duration:.2f}s (Total Elapsed: {str(timedelta(seconds=int(total_elapsed)))})")
+
+    final_duration = time.time() - total_start
+    print("\n" + "=" * 80)
+    print(f"  🎉 PIPELINE FINISHED SUCCESSFULLY IN {str(timedelta(seconds=int(final_duration)))} ({final_duration:.2f}s)!")
+    print(f"  📦 Outputs ready in 'output/' and submission zip in workspace root.")
+    print("=" * 80 + "\n")
     return 0
 
 

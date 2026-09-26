@@ -157,10 +157,18 @@ def extract_features_for_candidates(
         ]).iter_rows(named=True)
     }
 
+    from tqdm import tqdm
+
     feature_rows = []
     cand_pairs = list(zip(candidate_df["source1_entity_id"], candidate_df["candidate_entity_id"]))
 
-    for s1_id, cand_id in cand_pairs:
+    for s1_id, cand_id in tqdm(
+        cand_pairs,
+        total=len(cand_pairs),
+        desc="Feature Extraction Progress",
+        unit="pairs",
+        leave=True,
+    ):
         s1_rec = s1_dict.get(s1_id, {})
         cand_rec = cand_dict.get(cand_id, {})
 

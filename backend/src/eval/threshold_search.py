@@ -81,10 +81,10 @@ def search_optimal_threshold(
     prob_array = val_scored_df["pred_prob"].to_numpy()
 
     sweep_records = []
-    best_thresh = cfg.evaluation.get("default_threshold", 0.65)
-    best_score = -1.0
+    from tqdm import tqdm
 
-    for thresh in thresholds:
+    pbar = tqdm(thresholds, desc="Threshold Calibration Progress", unit="thresh")
+    for thresh in pbar:
         thresh = round(float(thresh), 4)
         mask = prob_array >= thresh
         passing_s1 = s1_array[mask]
@@ -109,6 +109,12 @@ def search_optimal_threshold(
         if score > best_score:
             best_score = score
             best_thresh = thresh
+
+        pbar.set_postfix({
+            "thresh": f"{thresh:.2f}",
+            "f05": f"{score:.4f}",
+            "best_f05": f"{best_score:.4f} (@{best_thresh:.2f})"
+        })
 
     sweep_df = pl.DataFrame(sweep_records)
     elapsed = time.time() - t0

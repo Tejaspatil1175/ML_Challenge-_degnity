@@ -54,15 +54,21 @@ def normalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     # 2. Extract prefix for fast blocking keys using native slice
     name_prefixes = clean_names.str.slice(0, 4).str.strip_chars()
 
-    # 3. Extract postal codes & cities
-    # Zip zipcodes and countries
+    # 3. Extract postal codes & cities with progress tracking
     raw_addrs_list = df["business_address"].to_list()
     countries_list = df["country"].to_list()
 
     zipcodes: List[str] = []
     cities: List[str] = []
 
-    for addr, cntry in zip(raw_addrs_list, countries_list):
+    from tqdm import tqdm
+    for addr, cntry in tqdm(
+        zip(raw_addrs_list, countries_list),
+        total=len(raw_addrs_list),
+        desc="  -> Parsing address parts",
+        unit="rows",
+        leave=False,
+    ):
         parts = extract_address_parts(addr, country=cntry)
         zipcodes.append(parts.get("zipcode") or "")
         cities.append(parts.get("city") or "")
@@ -78,7 +84,7 @@ def normalize_dataframe(df: pl.DataFrame) -> pl.DataFrame:
     ])
 
     elapsed = time.time() - t0
-    logger.debug(f"Normalization complete in {elapsed:.2f}s ({df.height / max(elapsed, 0.001):,.0f} rows/s).")
+    logger.info(f"  [OK] Normalization complete in {elapsed:.2f}s ({df.height / max(elapsed, 0.001):,.0f} rows/s).")
     return df_norm
 
 
@@ -95,6 +101,8 @@ def run_normalization_pipeline(
     Returns:
         Dictionary mapping source dataset key to cached Parquet path.
     """
+    from tqdm import tqdm
+
     target_dir = output_dir or Path(cfg.paths.processed_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -108,19 +116,23 @@ def run_normalization_pipeline(
     ]
 
     saved_paths: Dict[str, Path] = {}
+    total_sources = len(sources)
 
-    for key, path, prefix, out_name in sources:
-        out_path = target_dir / out_name
-        logger.info(f"Processing and normalizing {key} ({path.name}) -> {out_name}...")
-        
-        df = load_source(path, sample_n=sample_n)
-        validate_source_schema(df, expected_source=prefix)
-        
-        df_norm = normalize_dataframe(df)
-        df_norm.write_parquet(out_path, compression="zstd")
-        
-        saved_paths[key] = out_path
-        logger.info(f"Saved normalized parquet: {out_path} ({df_norm.height:,} rows)")
+    with tqdm(total=total_sources, desc="Normalization Progress", unit="file") as pbar:
+        for idx, (key, path, prefix, out_name) in enumerate(sources, start=1):
+            out_path = target_dir / out_name
+            pbar.set_postfix_str(f"[{idx}/{total_sources}] {key}")
+            logger.info(f"[{idx}/{total_sources}] Processing {key} ({path.name}) -> {out_name}...")
+            
+            df = load_source(path, sample_n=sample_n)
+            validate_source_schema(df, expected_source=prefix)
+            
+            df_norm = normalize_dataframe(df)
+            df_norm.write_parquet(out_path, compression="zstd")
+            
+            saved_paths[key] = out_path
+            pbar.update(1)
+            logger.info(f"Saved normalized parquet: {out_path} ({df_norm.height:,} rows)")
 
     logger.info("Batch normalization completed for all sources.")
     return saved_paths
