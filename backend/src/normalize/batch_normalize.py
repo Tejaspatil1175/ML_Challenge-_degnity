@@ -127,8 +127,14 @@ def run_normalization_pipeline(
         for idx, (key, path, prefix, out_name) in enumerate(sources, start=1):
             out_path = target_dir / out_name
             pbar.set_postfix_str(f"[{idx}/{total_sources}] {key}")
+
+            if out_path.exists() and sample_n is None:
+                saved_paths[key] = out_path
+                pbar.update(1)
+                logger.info(f"[{idx}/{total_sources}] Reusing cached normalized parquet: {out_path}")
+                continue
+
             logger.info(f"[{idx}/{total_sources}] Processing {key} ({path.name}) -> {out_name}...")
-            
             df = load_source(path, sample_n=sample_n)
             validate_source_schema(df, expected_source=prefix)
             
