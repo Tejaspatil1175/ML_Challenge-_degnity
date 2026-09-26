@@ -143,8 +143,22 @@ def run_prediction_pipeline(
     probs = predict_pair_probabilities(model, test_feat_df, feature_cols=feature_cols)
     scored_test_df = test_feat_df.with_columns(pl.Series("pred_prob", probs))
 
-    # 5. Determine threshold
-    dec_thresh = threshold or cfg.evaluation.get("default_threshold", 0.65)
+    # 5. Determine threshold (use calibrated optimal if available, else default)
+    dec_thresh = threshold
+    if dec_thresh is None:
+        rep_file = Path(cfg.paths.reports_dir) / "eval_results.md"
+        if rep_file.exists():
+            try:
+                import re
+                text = rep_file.read_text(encoding="utf-8")
+                match = re.search(r"Optimal Threshold:\s*\*\*([0-9.]+)\*\*", text)
+                if match:
+                    dec_thresh = float(match.group(1))
+                    logger.info(f"Loaded calibrated optimal threshold from {rep_file}: {dec_thresh:.3f}")
+            except Exception:
+                pass
+    if dec_thresh is None:
+        dec_thresh = cfg.evaluation.get("default_threshold", 0.65)
     logger.info(f"Applying decision threshold: {dec_thresh:.3f}")
 
     # 6. Write matching_results.tsv

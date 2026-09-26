@@ -68,6 +68,7 @@ def run_key_based_blocking(
     s2_parquet_path: Path,
     s3_parquet_path: Path,
     max_cands_per_entity: int = 50,
+    sample_n: Optional[int] = None,
 ) -> pl.DataFrame:
     """Executes high-speed multi-threaded DuckDB SQL key joins across S1 and (S2 U S3).
 
@@ -76,6 +77,7 @@ def run_key_based_blocking(
         s2_parquet_path: Path to normalized S2 parquet table.
         s3_parquet_path: Path to normalized S3 parquet table.
         max_cands_per_entity: Maximum candidate pairs retained per S1 entity.
+        sample_n: Optional limit on S1 entities for fast execution.
 
     Returns:
         polars.DataFrame with columns [source1_entity_id, candidate_entity_id].
@@ -95,72 +97,93 @@ def run_key_based_blocking(
     t0 = time.time()
 
     temp_cand_parquet = Path(cfg.paths.processed_dir) / f"{s1_parquet_path.stem}_raw_candidates.parquet"
+    spill_dir = Path(cfg.paths.processed_dir) / "duckdb_spill"
+    spill_dir.mkdir(parents=True, exist_ok=True)
 
-    con = duckdb.connect(database=":memory:")
+    db_file = spill_dir / f"{s1_parquet_path.stem}_blocking.duckdb"
+    if db_file.exists():
+        try:
+            db_file.unlink()
+        except Exception:
+            pass
+
+    con = duckdb.connect(str(db_file))
     threads = cfg.execution.get("num_workers", 4)
     con.execute(f"SET threads={threads}")
     con.execute("SET preserve_insertion_order=false")
+    con.execute(f"PRAGMA temp_directory='{spill_dir.as_posix()}'")
+    con.execute("SET max_temp_directory_size='50GB'")
+    con.execute("SET memory_limit='6GB'")
+
+    s1_from = f"(SELECT * FROM read_parquet('{s1_posix}') LIMIT {sample_n})" if (sample_n and sample_n > 0) else f"read_parquet('{s1_posix}')"
 
     try:
-        # Stream results directly to Parquet file on disk to maintain minimal memory footprint
-        query = f"""
-        COPY (
-            WITH raw_matches AS (
-                -- Pass 1: Exact Clean Business Name Match
-                SELECT 
-                    s1.entity_id AS source1_entity_id, 
-                    s23.entity_id AS candidate_entity_id,
-                    1 AS priority_score
-                FROM read_parquet('{s1_posix}') s1 
-                JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
-                  ON s1.clean_name = s23.clean_name 
-                 AND s1.clean_name != ''
-                 AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
-                
-                UNION ALL
-                
-                -- Pass 2: Prefix + Exact City Match in Same Country
-                SELECT 
-                    s1.entity_id AS source1_entity_id, 
-                    s23.entity_id AS candidate_entity_id,
-                    2 AS priority_score
-                FROM read_parquet('{s1_posix}') s1 
-                JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
-                  ON s1.name_prefix_4 = s23.name_prefix_4 
-                 AND LENGTH(s1.name_prefix_4) >= 3
-                 AND s1.clean_city = s23.clean_city
-                 AND s1.clean_city != ''
-                 AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
-                
-                UNION ALL
-                
-                -- Pass 3: Prefix + Exact Postal / PIN Code Match
-                SELECT 
-                    s1.entity_id AS source1_entity_id, 
-                    s23.entity_id AS candidate_entity_id,
-                    3 AS priority_score
-                FROM read_parquet('{s1_posix}') s1 
-                JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
-                  ON s1.name_prefix_4 = s23.name_prefix_4 
-                 AND LENGTH(s1.name_prefix_4) >= 3
-                 AND s1.clean_zipcode = s23.clean_zipcode 
-                 AND s1.clean_zipcode != ''
-            ),
-            unique_candidates AS (
-                SELECT source1_entity_id, candidate_entity_id, MIN(priority_score) AS priority_score
-                FROM raw_matches
-                GROUP BY source1_entity_id, candidate_entity_id
-            )
-            SELECT source1_entity_id, candidate_entity_id
-            FROM unique_candidates
-            QUALIFY ROW_NUMBER() OVER (
-                PARTITION BY source1_entity_id ORDER BY priority_score
-            ) <= {max_cands_per_entity}
-        ) TO '{temp_cand_parquet.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD);
-        """
+        # Create staging table on disk to process passes sequentially with minimal memory footprint
+        con.execute("CREATE TABLE candidates (source1_entity_id VARCHAR, candidate_entity_id VARCHAR, priority_score UTINYINT);")
 
-        con.execute(query)
+        # Pass 1: Exact Clean Business Name Match
+        logger.info("Running Blocking Pass 1: Exact Clean Business Name...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id,
+            1 AS priority_score
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.clean_name = s23.clean_name 
+         AND s1.clean_name != ''
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '');
+        """)
+
+        # Pass 2: Prefix + Exact City Match in Same Country
+        logger.info("Running Blocking Pass 2: Name Prefix (4) + City...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id,
+            2 AS priority_score
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.name_prefix_4 = s23.name_prefix_4 
+         AND LENGTH(s1.name_prefix_4) >= 3
+         AND s1.clean_city = s23.clean_city
+         AND s1.clean_city != ''
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '');
+        """)
+
+        # Pass 3: Prefix + Exact Postal / PIN Code Match
+        logger.info("Running Blocking Pass 3: Name Prefix (4) + Postal Code...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id,
+            3 AS priority_score
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.name_prefix_4 = s23.name_prefix_4 
+         AND LENGTH(s1.name_prefix_4) >= 3
+         AND s1.clean_zipcode = s23.clean_zipcode 
+         AND s1.clean_zipcode != '';
+        """)
+
+        # Export distinct candidate pairs directly to Parquet
+        logger.info("Exporting distinct candidate pairs to Parquet...")
+        con.execute(f"""
+        COPY (
+            SELECT DISTINCT source1_entity_id, candidate_entity_id 
+            FROM candidates
+        ) TO '{temp_cand_parquet.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD);
+        """)
+
         con.close()
+        if db_file.exists():
+            try:
+                db_file.unlink()
+            except Exception:
+                pass
 
         cand_df = pl.read_parquet(temp_cand_parquet)
 

@@ -1,0 +1,44 @@
+{
+  "model_file": "latest_model.joblib",
+  "saved_at": "2026-09-26 16:14:30 UTC",
+  "model_class": "LGBMClassifier",
+  "metadata": {
+    "version": "v1",
+    "feature_names": [
+      "name_ratio",
+      "name_tok_sort",
+      "name_tok_set",
+      "name_partial",
+      "name_jw",
+      "name_lev",
+      "addr_ratio",
+      "addr_tok_sort",
+      "addr_tok_set",
+      "name_jaccard",
+      "addr_jaccard",
+      "name_char3",
+      "country_match",
+      "zip_match",
+      "city_match",
+      "name_len_diff",
+      "addr_len_diff"
+    ],
+    "hyperparameters": {
+      "objective": "binary",
+      "metric": "binary_logloss",
+      "learning_rate": 0.05,
+      "num_leaves": 63,
+      "n_estimators": 500,
+      "min_child_samples": 100,
+      "colsample_bytree": 0.8,
+      "subsample": 0.8,
+      "scale_pos_weight": 6.279467159695885,
+      "random_state": 42,
+      "n_jobs": -1,
+      "verbose": -1
+    },
+    "train_rows": 22741696,
+    "val_rows": 5683788,
+    "scale_pos_weight": 6.279467159695885
+  }
+}

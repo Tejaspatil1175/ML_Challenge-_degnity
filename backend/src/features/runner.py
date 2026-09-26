@@ -35,14 +35,18 @@ def run_features_stage(
 
     proc_dir = Path(cfg.paths.processed_dir)
     cand_file = Path(cfg.paths.output_dir) / f"{split}_candidate_pairs.tsv"
+    if not cand_file.exists() and split == "test":
+        alt_cand_file = Path(cfg.paths.candidate_pairs_tsv)
+        if alt_cand_file.exists():
+            cand_file = alt_cand_file
+
     if not cand_file.exists():
-        # Fallback to candidate_pairs_tsv if test
-        cand_file = Path(cfg.paths.candidate_pairs_tsv)
+        logger.info(f"Candidate pairs file not found at {cand_file}. Automatically running blocking stage for split='{split}'...")
+        from backend.src.blocking.runner import run_blocking_stage
+        run_blocking_stage(split=split, sample_n=sample_n, output_candidate_path=cand_file)
 
     logger.info(f"Reading candidate pairs from: {cand_file}")
-    cand_df = pl.read_csv(cand_file, separator="\t")
-    if sample_n and sample_n > 0:
-        cand_df = cand_df.head(sample_n)
+    cand_df = pl.read_csv(cand_file, separator="\t", n_rows=sample_n if (sample_n and sample_n > 0) else None)
 
     # Load normalized parquet tables
     s1_norm = pl.read_parquet(proc_dir / f"{split}_s1_norm.parquet")

@@ -22,3 +22,5 @@ models/*.faiss
 models/*.npy
 output/
 reports/*.png
+*.log
+*.zip

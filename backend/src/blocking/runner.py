@@ -47,6 +47,7 @@ def run_blocking_stage(
         s2_parquet_path=s2_norm,
         s3_parquet_path=s3_norm,
         max_cands_per_entity=cfg.blocking.get("max_candidates_per_entity", 50),
+        sample_n=sample_n,
     )
 
     # 2. Merge & deduplicate

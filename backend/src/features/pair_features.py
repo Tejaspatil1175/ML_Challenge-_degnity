@@ -111,21 +111,110 @@ def extract_pairwise_feature_vector(
     }
 
 
+def _process_pair_chunk(
+    s1_ids: List[str],
+    cand_ids: List[str],
+    s1_dict: Dict[str, Tuple[str, str, str, str, str]],
+    cand_dict: Dict[str, Tuple[str, str, str, str, str]],
+) -> pl.DataFrame:
+    """Worker function to compute pairwise feature vectors for a chunk using preallocated numpy arrays."""
+    n = len(s1_ids)
+    
+    arr_name_ratio = np.empty(n, dtype=np.float32)
+    arr_name_tok_sort = np.empty(n, dtype=np.float32)
+    arr_name_tok_set = np.empty(n, dtype=np.float32)
+    arr_name_partial = np.empty(n, dtype=np.float32)
+    arr_name_jw = np.empty(n, dtype=np.float32)
+    arr_name_lev = np.empty(n, dtype=np.float32)
+    arr_addr_ratio = np.empty(n, dtype=np.float32)
+    arr_addr_tok_sort = np.empty(n, dtype=np.float32)
+    arr_addr_tok_set = np.empty(n, dtype=np.float32)
+    arr_name_jaccard = np.empty(n, dtype=np.float32)
+    arr_addr_jaccard = np.empty(n, dtype=np.float32)
+    arr_name_char3 = np.empty(n, dtype=np.float32)
+    arr_country_match = np.empty(n, dtype=np.float32)
+    arr_zip_match = np.empty(n, dtype=np.float32)
+    arr_city_match = np.empty(n, dtype=np.float32)
+    arr_name_len_diff = np.empty(n, dtype=np.float32)
+    arr_addr_len_diff = np.empty(n, dtype=np.float32)
+
+    empty_tuple = ("", "", "", "", "")
+
+    for i in range(n):
+        s1_id = s1_ids[i]
+        cand_id = cand_ids[i]
+
+        s1_n, s1_a, s1_c, s1_z, s1_ct = s1_dict.get(s1_id, empty_tuple)
+        cand_n, cand_a, cand_c, cand_z, cand_ct = cand_dict.get(cand_id, empty_tuple)
+
+        # 1. String metrics (Name)
+        arr_name_ratio[i] = round(fuzz.ratio(s1_n, cand_n) / 100.0, 4)
+        arr_name_tok_sort[i] = round(fuzz.token_sort_ratio(s1_n, cand_n) / 100.0, 4)
+        arr_name_tok_set[i] = round(fuzz.token_set_ratio(s1_n, cand_n) / 100.0, 4)
+        arr_name_partial[i] = round(fuzz.partial_ratio(s1_n, cand_n) / 100.0, 4)
+        arr_name_jw[i] = round(float(distance.JaroWinkler.similarity(s1_n, cand_n)), 4)
+        arr_name_lev[i] = round(float(distance.Levenshtein.normalized_similarity(s1_n, cand_n)), 4)
+
+        # 2. String metrics (Address)
+        arr_addr_ratio[i] = round(fuzz.ratio(s1_a, cand_a) / 100.0, 4)
+        arr_addr_tok_sort[i] = round(fuzz.token_sort_ratio(s1_a, cand_a) / 100.0, 4)
+        arr_addr_tok_set[i] = round(fuzz.token_set_ratio(s1_a, cand_a) / 100.0, 4)
+
+        # 3. N-Gram & Token overlap
+        arr_name_jaccard[i] = round(compute_word_jaccard(s1_n, cand_n), 4)
+        arr_addr_jaccard[i] = round(compute_word_jaccard(s1_a, cand_a), 4)
+        arr_name_char3[i] = round(compute_char_ngram_jaccard(s1_n, cand_n, 3), 4)
+
+        # 4. Structured Geographic and Location Agreement
+        arr_country_match[i] = 1.0 if s1_c and s1_c == cand_c else (0.5 if not s1_c or not cand_c else 0.0)
+        arr_zip_match[i] = 1.0 if s1_z and s1_z == cand_z else (0.5 if not s1_z or not cand_z else 0.0)
+        arr_city_match[i] = 1.0 if s1_ct and s1_ct == cand_ct else (0.5 if not s1_ct or not cand_ct else 0.0)
+
+        # 5. Length Ratios
+        len_max_n = max(len(s1_n), len(cand_n), 1)
+        arr_name_len_diff[i] = round(abs(len(s1_n) - len(cand_n)) / len_max_n, 4)
+
+        len_max_a = max(len(s1_a), len(cand_a), 1)
+        arr_addr_len_diff[i] = round(abs(len(s1_a) - len(cand_a)) / len_max_a, 4)
+
+    return pl.DataFrame({
+        "source1_entity_id": s1_ids,
+        "candidate_entity_id": cand_ids,
+        "name_ratio": arr_name_ratio,
+        "name_tok_sort": arr_name_tok_sort,
+        "name_tok_set": arr_name_tok_set,
+        "name_partial": arr_name_partial,
+        "name_jw": arr_name_jw,
+        "name_lev": arr_name_lev,
+        "addr_ratio": arr_addr_ratio,
+        "addr_tok_sort": arr_addr_tok_sort,
+        "addr_tok_set": arr_addr_tok_set,
+        "name_jaccard": arr_name_jaccard,
+        "addr_jaccard": arr_addr_jaccard,
+        "name_char3": arr_name_char3,
+        "country_match": arr_country_match,
+        "zip_match": arr_zip_match,
+        "city_match": arr_city_match,
+        "name_len_diff": arr_name_len_diff,
+        "addr_len_diff": arr_addr_len_diff,
+    })
+
+
 def extract_features_for_candidates(
     candidate_df: pl.DataFrame,
     s1_norm_df: pl.DataFrame,
     s2_norm_df: pl.DataFrame,
     s3_norm_df: pl.DataFrame,
-    batch_size: int = 50000,
+    batch_size: int = 100000,
 ) -> pl.DataFrame:
-    """Extracts pairwise feature matrix across all candidate pairs.
+    """Extracts pairwise feature matrix across all candidate pairs in memory-efficient batches.
 
     Args:
         candidate_df: DataFrame with columns [source1_entity_id, candidate_entity_id].
         s1_norm_df: Normalized Source 1 DataFrame.
         s2_norm_df: Normalized Source 2 DataFrame.
         s3_norm_df: Normalized Source 3 DataFrame.
-        batch_size: Processing batch size.
+        batch_size: Processing batch size (default 100,000 for minimal memory footprint).
 
     Returns:
         polars.DataFrame containing candidate IDs and all numeric feature columns.
@@ -133,62 +222,75 @@ def extract_features_for_candidates(
     Raises:
         FeatureExtractionError: If feature extraction produces NaN or fails.
     """
-    logger.info(f"Extracting pairwise feature matrix for {candidate_df.height:,} candidate pairs...")
+    total_candidates = candidate_df.height
+    logger.info(f"Extracting pairwise feature matrix for {total_candidates:,} candidate pairs...")
     t0 = time.time()
 
-    if candidate_df.height == 0:
+    if total_candidates == 0:
         raise FeatureExtractionError("Cannot extract features for empty candidate DataFrame.")
 
-    # Combine S2 and S3 for fast lookup
-    target_combined = pl.concat([s2_norm_df, s3_norm_df]).unique(subset=["entity_id"])
+    # Filter normalized tables to only entities present in the candidate pairs to minimize memory
+    needed_s1 = set(candidate_df["source1_entity_id"])
+    needed_cand = set(candidate_df["candidate_entity_id"])
 
-    # Prepare lookup dictionaries for instant access
-    s1_dict = {
-        row["entity_id"]: row
-        for row in s1_norm_df.select([
-            "entity_id", "clean_name", "clean_address", "clean_country", "clean_zipcode", "clean_city"
-        ]).iter_rows(named=True)
-    }
+    cols = ["entity_id", "clean_name", "clean_address", "clean_country", "clean_zipcode", "clean_city"]
 
-    cand_dict = {
-        row["entity_id"]: row
-        for row in target_combined.select([
-            "entity_id", "clean_name", "clean_address", "clean_country", "clean_zipcode", "clean_city"
-        ]).iter_rows(named=True)
+    s1_filtered = s1_norm_df.filter(pl.col("entity_id").is_in(needed_s1)).select(cols)
+    target_filtered = (
+        pl.concat([s2_norm_df, s3_norm_df])
+        .filter(pl.col("entity_id").is_in(needed_cand))
+        .unique(subset=["entity_id"])
+        .select(cols)
+    )
+
+    s1_dict: Dict[str, Tuple[str, str, str, str, str]] = {
+        row[0]: (row[1] or "", row[2] or "", row[3] or "", row[4] or "", row[5] or "")
+        for row in s1_filtered.iter_rows()
     }
+    del s1_filtered
+
+    cand_dict: Dict[str, Tuple[str, str, str, str, str]] = {
+        row[0]: (row[1] or "", row[2] or "", row[3] or "", row[4] or "", row[5] or "")
+        for row in target_filtered.iter_rows()
+    }
+    del target_filtered, needed_s1, needed_cand
 
     from tqdm import tqdm
+    import gc
 
-    feature_rows = []
-    cand_pairs = list(zip(candidate_df["source1_entity_id"], candidate_df["candidate_entity_id"]))
+    s1_col = candidate_df["source1_entity_id"].to_list()
+    cand_col = candidate_df["candidate_entity_id"].to_list()
 
-    for s1_id, cand_id in tqdm(
-        cand_pairs,
-        total=len(cand_pairs),
-        desc="Feature Extraction Progress",
+    chunks_df: List[pl.DataFrame] = []
+    num_batches = (total_candidates + batch_size - 1) // batch_size
+
+    with tqdm(
+        total=total_candidates,
+        desc="Feature Extraction",
         unit="pairs",
+        mininterval=3.0,
         leave=True,
-    ):
-        s1_rec = s1_dict.get(s1_id, {})
-        cand_rec = cand_dict.get(cand_id, {})
+    ) as pbar:
+        for b in range(num_batches):
+            start_idx = b * batch_size
+            end_idx = min(start_idx + batch_size, total_candidates)
 
-        feats = extract_pairwise_feature_vector(
-            s1_name=s1_rec.get("clean_name", ""),
-            cand_name=cand_rec.get("clean_name", ""),
-            s1_addr=s1_rec.get("clean_address", ""),
-            cand_addr=cand_rec.get("clean_address", ""),
-            s1_country=s1_rec.get("clean_country", ""),
-            cand_country=cand_rec.get("clean_country", ""),
-            s1_zip=s1_rec.get("clean_zipcode", ""),
-            cand_zip=cand_rec.get("clean_zipcode", ""),
-            s1_city=s1_rec.get("clean_city", ""),
-            cand_city=cand_rec.get("clean_city", ""),
-        )
-        feats["source1_entity_id"] = s1_id
-        feats["candidate_entity_id"] = cand_id
-        feature_rows.append(feats)
+            chunk_s1 = s1_col[start_idx:end_idx]
+            chunk_cand = cand_col[start_idx:end_idx]
 
-    features_df = pl.DataFrame(feature_rows)
+            chunk_df = _process_pair_chunk(chunk_s1, chunk_cand, s1_dict, cand_dict)
+            chunks_df.append(chunk_df)
+
+            pbar.update(end_idx - start_idx)
+
+    # Free memory
+    del s1_col, cand_col, s1_dict, cand_dict
+    gc.collect()
+
+    logger.info("Concatenating extracted chunk DataFrames...")
+    features_df = pl.concat(chunks_df)
+    del chunks_df
+    gc.collect()
 
     # Check for NaNs or nulls
     null_counts = features_df.null_count().sum_horizontal().item()

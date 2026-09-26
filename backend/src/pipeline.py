@@ -255,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # predict
     p_pred = subparsers.add_parser("predict", help="Generate submission predictions on test set")
+    p_pred.add_argument("--sample", type=int, default=None, help="Sample limit for fast inference")
     p_pred.add_argument("--validate", action="store_true", help="Validate output format using official validator")
     p_pred.set_defaults(func=cmd_predict)
 

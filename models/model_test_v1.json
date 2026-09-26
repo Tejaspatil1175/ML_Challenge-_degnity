@@ -1,0 +1,29 @@
+{
+  "model_file": "model_test_v1.joblib",
+  "saved_at": "2026-09-26 14:49:03 UTC",
+  "model_class": "LGBMClassifier",
+  "metadata": {
+    "version": "test_v1",
+    "feature_names": [
+      "name_ratio",
+      "addr_ratio"
+    ],
+    "hyperparameters": {
+      "objective": "binary",
+      "metric": "binary_logloss",
+      "learning_rate": 0.1,
+      "num_leaves": 63,
+      "n_estimators": 20,
+      "min_child_samples": 100,
+      "colsample_bytree": 0.8,
+      "subsample": 0.8,
+      "scale_pos_weight": 3.6666666666666665,
+      "random_state": 42,
+      "n_jobs": -1,
+      "verbose": -1
+    },
+    "train_rows": 70,
+    "val_rows": 30,
+    "scale_pos_weight": 3.6666666666666665
+  }
+}

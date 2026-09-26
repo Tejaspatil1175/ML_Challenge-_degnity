@@ -81,6 +81,8 @@ def search_optimal_threshold(
     prob_array = val_scored_df["pred_prob"].to_numpy()
 
     sweep_records = []
+    best_score = -1.0
+    best_thresh = float(threshold_min)
     from tqdm import tqdm
 
     pbar = tqdm(thresholds, desc="Threshold Calibration Progress", unit="thresh")

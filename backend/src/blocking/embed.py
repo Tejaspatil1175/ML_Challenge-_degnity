@@ -27,9 +27,11 @@ def get_embedding_model(model_name: Optional[str] = None):
     if _MODEL_INSTANCE is None:
         try:
             from sentence_transformers import SentenceTransformer
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
             name = model_name or cfg.blocking.get("embedding_model_name", "sentence-transformers/all-MiniLM-L6-v2")
-            logger.info(f"Loading dense embedding model: {name}")
-            _MODEL_INSTANCE = SentenceTransformer(name)
+            logger.info(f"Loading dense embedding model '{name}' on device: {device}")
+            _MODEL_INSTANCE = SentenceTransformer(name, device=device)
         except Exception as e:
             logger.warning(f"Could not load SentenceTransformer ({e}). Using offline TF-IDF dense projection.")
             _MODEL_INSTANCE = "fallback_tfidf"
