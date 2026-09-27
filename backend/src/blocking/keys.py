@@ -169,6 +169,70 @@ def run_key_based_blocking(
         QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
         """)
 
+        # Pass 4: Token-Sort Key Match (Handles word reorderings & core name tokens)
+        logger.info("Running Blocking Pass 4: Token-Sort Key...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.token_sort_key = s23.token_sort_key 
+         AND s1.token_sort_key != ''
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+        """)
+
+        # Pass 5: Street Number + City Match (Captures transliterations & name variations)
+        logger.info("Running Blocking Pass 5: Street Number + City...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.addr_num = s23.addr_num 
+         AND LENGTH(s1.addr_num) >= 2
+         AND s1.clean_city = s23.clean_city
+         AND s1.clean_city != ''
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+        """)
+
+        # Pass 6: Street Number + Postal Code Match
+        logger.info("Running Blocking Pass 6: Street Number + Postal Code...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.addr_num = s23.addr_num 
+         AND LENGTH(s1.addr_num) >= 2
+         AND s1.clean_zipcode = s23.clean_zipcode 
+         AND s1.clean_zipcode != ''
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+        """)
+
+        # Pass 7: Significant Address Tokens Match
+        logger.info("Running Blocking Pass 7: Significant Address Tokens...")
+        con.execute(f"""
+        INSERT INTO candidates
+        SELECT 
+            s1.entity_id AS source1_entity_id, 
+            s23.entity_id AS candidate_entity_id
+        FROM {s1_from} s1 
+        JOIN read_parquet(['{s2_posix}', '{s3_posix}']) s23 
+          ON s1.addr_tok_key = s23.addr_tok_key 
+         AND s1.addr_tok_key != ''
+         AND (s1.clean_city = s23.clean_city OR s1.clean_zipcode = s23.clean_zipcode)
+         AND (s1.clean_country = s23.clean_country OR s1.clean_country = '' OR s23.clean_country = '')
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY s1.entity_id) <= {max_cands_per_entity};
+        """)
+
         # Export distinct candidate pairs directly to Parquet
         logger.info("Exporting distinct candidate pairs to Parquet...")
         con.execute(f"""
